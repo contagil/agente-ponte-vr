@@ -1,0 +1,5 @@
+httpx==0.28.1
+python-dotenv==1.0.0
+# só usado por scripts/validar_tarefas_agente_vr.py (conexão direta ao
+# Postgres do VR pra validar SQL do catálogo, fora do caminho de produção)
+psycopg2-binary==2.9.10
