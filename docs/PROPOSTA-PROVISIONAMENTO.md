@@ -144,18 +144,68 @@ Cada chamada grava em `db.audit(...)` com `app_id` no lugar de `sam` — dá pra
 diferenciar "criado pelo Fulano no console" de "criado via API pela aplicação
 reforma-legal", coisa que as alternativas descartadas (§2) não conseguiam.
 
+### 3.4 Configuração de banco pela API — RASCUNHO SEPARADO, mais sensível (07/08)
+
+Implementado na branch `draft/api-db-config-rl` (não `draft/api-provisionamento-rl`
+— é um rascunho novo, ainda sem revisão do Danillo). Fecha a lacuna do §4
+original: o Reforma Legal passa a poder configurar o `dsn=` do cliente sem
+precisar de alguém editando o `agent.conf` na máquina dele.
+
+**Por que é uma branch/decisão separada da §3.1-3.3:** aqueles endpoints só
+criam identidade (cliente/agente) e movem bytes que já existiam (o zip). Este
+aqui faz a senha do Postgres do CLIENTE passar pela aplicação consumidora (o
+Reforma Legal, via a ponte) antes de chegar cifrada no agente — hoje isso só
+acontecia dentro do console (`admin_db_config`, sessão AD). Raio de explosão
+bem maior, pede permissão própria.
+
+```
+GET /api/v1/provisionamento/agentes/{agent_id}/status
+  -> 200 {"agent_id", "enrolled": bool, "online": bool, "db_status"}
+```
+Necessário porque o agente só pode ser configurado depois de ter feito
+enrollment ao menos uma vez (é a chave X25519 dele que cifra a senha — sem
+isso não tem pra quem cifrar). O consumidor usa isto pra saber quando liberar
+a etapa "configurar banco" na tela dele — antes disso, só existe a opção
+manual (editar o `agent.conf`).
+
+```
+POST /api/v1/provisionamento/agentes/{agent_id}/db-config
+  {"host": "...", "port": "...", "user": "...", "password": "...", "dbname": "..."}
+
+  -> 202 {"request_id": "...", "status": "dispatched" | "queued (agent offline)"}
+  -> 404 agente não existe ou ainda não fez enrollment
+  -> 422 host/port/user/dbname faltando
+```
+Mesmo corpo de `admin_db_config` (`main.py`) — a senha é cifrada pro X25519 do
+agente (`sealing.seal_for_agent`) ANTES de qualquer persistência local; nunca
+grava em claro, nunca vai pro `audit` (só host/user/dbname, igual ao console).
+O agente só aplica depois de CONECTAR de verdade — a resposta aqui é sempre
+"pedido aceito", não "banco configurado".
+
+```
+GET /api/v1/provisionamento/agentes/{agent_id}/db-config/{request_id}
+  -> 200 {"status": "pending" | "dispatched" | "ok" | "error", "error": "..."}
+```
+Pra quem chamou saber o desfecho — o `dispatch` acima só confirma que o
+pedido foi aceito, não que o agente conseguiu conectar.
+
+**Permissão:** verbo novo `agents.dbconfig`, mesmo nome já usado no RBAC do
+console (`require_perm("agents.dbconfig")` em `admin_db_config`) — segue o
+mesmo corte da §3.1. Testado com `TestClient` (11 cenários, incluindo a
+checagem de que a senha nunca aparece em claro no `config_enc` persistido, e
+o `403` de escopo por cliente).
+
 ## 4. O que ainda fica de fora, mesmo com isso implementado
 
-- **O `dsn=` do banco do cliente.** O pacote sai com um placeholder
-  (`postgresql://usuario:senha@127.0.0.1:5432/vr`) — quem instala ainda
-  precisa preencher, a menos que `C:\vr\vr.properties` exista na máquina (aí
-  o agente já resolve sozinho, sem mudança nenhuma necessária). Se quisermos
-  eliminar isso também, precisaria expor `POST /admin/agents/{id}/db-config`
-  pela mesma API — decisão à parte, com uma implicação extra: esse endpoint
-  hoje recebe a senha do banco do cliente em texto (cifrada pro agente antes
-  de qualquer persistência) — significa que o Reforma Legal passaria a
-  manusear, mesmo que de passagem, a credencial do Postgres do cliente. Vale
-  avaliar se isso é aceitável antes de pedir.
+- ~~**O `dsn=` do banco do cliente.**~~ Resolvido pela §3.4 acima (rascunho
+  separado `draft/api-db-config-rl`, pendente de revisão). O pacote continua
+  saindo com o placeholder (`postgresql://usuario:senha@127.0.0.1:5432/vr`) —
+  quem instala ainda pode preenchê-lo manualmente ou confiar no
+  `C:\vr\vr.properties`, mas agora existe um terceiro caminho: o RL manda a
+  senha pela API depois que o agente faz enrollment. Fica explícito de novo:
+  isso significa que o Reforma Legal passa a manusear, mesmo que de
+  passagem, a credencial do Postgres do cliente — é exatamente o motivo de
+  ser um rascunho à parte, não incluído automaticamente no aval da §3.
 - **Quem "dona" o cadastro depois de criado.** O cliente/agente criado pela
   API continua aparecendo no console pra gestão manual (revogar, trocar
   tier)? Presumo que sim (mesma tabela), mas vale confirmar com o Danillo.

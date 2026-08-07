@@ -96,10 +96,55 @@ async def _processar_provisionamento(pedido: dict) -> None:
     log.info("pedido %s (provisionar) concluído em %.1fs", pedido_id, time.monotonic() - inicio)
 
 
+async def _processar_status_agente(pedido: dict) -> None:
+    """RASCUNHO (PROPOSTA-PROVISIONAMENTO.md §3.4, branch draft/api-db-config-rl
+    do agent-vr — ainda não revisada). O RL usa isto pra saber quando o agente
+    já fez enrollment (libera a etapa de configurar banco) e pra acompanhar o
+    resultado da última tentativa de conexão (db_status/db_error)."""
+    pedido_id = pedido["pedido_id"]
+    agent_id = pedido.get("agent_id")
+    try:
+        status = await agente.status_agente(agent_id)
+    except agente.AgenteVRError as exc:
+        await cliente_rl.entregar_resultado(pedido_id, status="erro", erro=f"[{exc.status_code}] {exc.mensagem}")
+        return
+    except Exception as exc:  # noqa: BLE001
+        log.exception("pedido %s: falha inesperada", pedido_id)
+        await cliente_rl.entregar_resultado(pedido_id, status="erro", erro=f"erro interno: {exc}")
+        return
+    await cliente_rl.entregar_resultado(pedido_id, status="concluido", resumo={}, resultado=status)
+
+
+async def _processar_configurar_banco(pedido: dict) -> None:
+    """RASCUNHO — mesma branch/aviso de _processar_status_agente. Só confirma
+    que o pedido foi ACEITO pelo agent-vr (dispatched/queued); o desfecho real
+    da conexão sai no db_status/db_error do próximo /status."""
+    pedido_id = pedido["pedido_id"]
+    agent_id = pedido.get("agent_id")
+    banco = pedido.get("banco") or {}
+    try:
+        resultado = await agente.configurar_banco_agente(
+            agent_id, banco.get("host", ""), banco.get("port", ""),
+            banco.get("user", ""), banco.get("password", ""), banco.get("dbname", ""),
+        )
+    except agente.AgenteVRError as exc:
+        await cliente_rl.entregar_resultado(pedido_id, status="erro", erro=f"[{exc.status_code}] {exc.mensagem}")
+        return
+    except Exception as exc:  # noqa: BLE001
+        log.exception("pedido %s: falha inesperada", pedido_id)
+        await cliente_rl.entregar_resultado(pedido_id, status="erro", erro=f"erro interno: {exc}")
+        return
+    await cliente_rl.entregar_resultado(pedido_id, status="concluido", resumo={}, resultado=resultado)
+
+
 async def _processar(pedido: dict) -> None:
     tipo = pedido.get("tipo") or "sincronizar"
     if tipo == "provisionar":
         await _processar_provisionamento(pedido)
+    elif tipo == "status_agente":
+        await _processar_status_agente(pedido)
+    elif tipo == "configurar_banco":
+        await _processar_configurar_banco(pedido)
     else:
         await _processar_sincronizacao(pedido)
 

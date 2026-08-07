@@ -158,6 +158,17 @@ def _headers_provisionamento() -> dict[str, str]:
     return {"Authorization": f"Bearer {PROVISIONAMENTO_API_KEY}", "Content-Type": "application/json"}
 
 
+async def _get_provisionamento(caminho: str) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
+            resp = await client.get(f"{API_URL}{caminho}", headers=_headers_provisionamento())
+    except httpx.RequestError as exc:
+        raise AgenteVRError(502, f"não foi possível falar com o Agente VR: {exc}") from exc
+    if resp.status_code >= 400:
+        raise _traduzir_erro(resp)
+    return resp.json()
+
+
 async def _post_provisionamento(caminho: str, corpo: dict) -> dict:
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
@@ -220,6 +231,25 @@ async def baixar_pacote_agente(agent_id: str) -> bytes:
 
 async def revogar_agente(agent_id: str) -> dict:
     return await _delete_provisionamento(f"/provisionamento/agentes/{agent_id}")
+
+
+async def status_agente(agent_id: str) -> dict:
+    """{'enrolled', 'online', 'db_status'} — usado pra saber quando liberar
+    a etapa de configurar banco (RASCUNHO §3.4, draft/api-db-config-rl no
+    agent-vr, ainda não revisado com o time)."""
+    return await _get_provisionamento(f"/provisionamento/agentes/{agent_id}/status")
+
+
+async def configurar_banco_agente(agent_id: str, host: str, port: str, user: str,
+                                  password: str, dbname: str) -> dict:
+    """Devolve {request_id, status} na hora — 'dispatched' ou 'queued'. O
+    desfecho real (conectou ou não) não se acompanha por este request_id: sai
+    sozinho no próprio heartbeat do agente, já exposto em status_agente()
+    como db_status/db_error — não precisa de um segundo polling aqui."""
+    return await _post_provisionamento(
+        f"/provisionamento/agentes/{agent_id}/db-config",
+        {"host": host, "port": port, "user": user, "password": password, "dbname": dbname},
+    )
 
 
 async def whoami() -> dict:
