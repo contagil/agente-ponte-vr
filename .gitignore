@@ -6,3 +6,8 @@ data/*
 !data/Tabela_NCM_Vigente_*.json
 *.sqlite
 *.sqlite_extract/
+
+# saída de teste/depuração com dado real de cliente (CNPJ, razão social) —
+# nunca deve ir pro repositório (ver commit d97c831, removido do rastreamento
+# em seguida mas ainda no histórico)
+relatorio_agente_vr.json
