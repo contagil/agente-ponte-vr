@@ -20,6 +20,12 @@ import httpx
 API_URL = os.getenv("AGENTE_VR_API_URL", "https://agents.contagilpb.com.br/api/v1")
 API_KEY = os.getenv("AGENTE_VR_API_KEY", "")
 
+# Chave SEPARADA da de consultas (PROPOSTA-PROVISIONAMENTO.md §3.1) — raio de
+# explosão bem maior (cria identidade, emite token de enrollment) que ler dado
+# já pronto. Sem ela, o /provisionar do RL fica indisponível, mas a
+# sincronização (consultas) continua funcionando normalmente.
+PROVISIONAMENTO_API_KEY = os.getenv("AGENTE_VR_PROVISIONAMENTO_API_KEY", "")
+
 # O cérebro espera até o timeout_ms da tarefa + 15s de margem antes de devolver
 # 504; o client HTTP daqui precisa ser mais tolerante que isso, senão a gente
 # desiste antes dele responder (PROPOSTA-API-EXTERNA §7).
@@ -136,6 +142,84 @@ async def _post(caminho: str, corpo: dict) -> dict:
 def integracao_configurada() -> bool:
     """Permite a tela distinguir 'servidor sem integração' de 'agente offline'."""
     return bool(API_KEY)
+
+
+def provisionamento_configurado() -> bool:
+    return bool(PROVISIONAMENTO_API_KEY)
+
+
+def _headers_provisionamento() -> dict[str, str]:
+    if not PROVISIONAMENTO_API_KEY:
+        raise AgenteVRError(
+            503,
+            "Provisionamento não configurado nesta ponte "
+            "(AGENTE_VR_PROVISIONAMENTO_API_KEY ausente).",
+        )
+    return {"Authorization": f"Bearer {PROVISIONAMENTO_API_KEY}", "Content-Type": "application/json"}
+
+
+async def _post_provisionamento(caminho: str, corpo: dict) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
+            resp = await client.post(f"{API_URL}{caminho}", headers=_headers_provisionamento(), json=corpo)
+    except httpx.RequestError as exc:
+        raise AgenteVRError(502, f"não foi possível falar com o Agente VR: {exc}") from exc
+    if resp.status_code >= 400:
+        raise _traduzir_erro(resp)
+    return resp.json()
+
+
+async def _delete_provisionamento(caminho: str) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
+            resp = await client.delete(f"{API_URL}{caminho}", headers=_headers_provisionamento())
+    except httpx.RequestError as exc:
+        raise AgenteVRError(502, f"não foi possível falar com o Agente VR: {exc}") from exc
+    if resp.status_code >= 400:
+        raise _traduzir_erro(resp)
+    return resp.json()
+
+
+async def _get_bytes_provisionamento(caminho: str) -> bytes:
+    """Igual a _post/_get, mas devolve bytes crus — usado só pelo download do
+    pacote (zip), que não é JSON."""
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
+            resp = await client.get(f"{API_URL}{caminho}", headers=_headers_provisionamento())
+    except httpx.RequestError as exc:
+        raise AgenteVRError(502, f"não foi possível falar com o Agente VR: {exc}") from exc
+    if resp.status_code >= 400:
+        raise _traduzir_erro(resp)
+    return resp.content
+
+
+async def provisionar_cliente(client_id: str, name: str, notes: str | None = None) -> dict:
+    """POST /provisionamento/clientes — 409 se já existir (deixa subir como
+    AgenteVRError; quem chama decide se trata como 'já existe, seguir')."""
+    return await _post_provisionamento(
+        "/provisionamento/clientes",
+        {"client_id": client_id, "name": name, "notes": notes},
+    )
+
+
+async def provisionar_agente(agent_id: str, client_id: str, tier: str = "test") -> dict:
+    """POST /provisionamento/agentes — devolve {agent_id, client_id, tier,
+    enroll_token}. O token só existe nesta resposta; depois só embutido no
+    pacote (mesma regra do console)."""
+    return await _post_provisionamento(
+        "/provisionamento/agentes",
+        {"agent_id": agent_id, "client_id": client_id, "tier": tier},
+    )
+
+
+async def baixar_pacote_agente(agent_id: str) -> bytes:
+    """GET /provisionamento/agentes/{id}/pacote — bytes do zip (agent-vr.exe +
+    agent.conf + LEIA-ME.txt), pronto pra repassar ao RL."""
+    return await _get_bytes_provisionamento(f"/provisionamento/agentes/{agent_id}/pacote")
+
+
+async def revogar_agente(agent_id: str) -> dict:
+    return await _delete_provisionamento(f"/provisionamento/agentes/{agent_id}")
 
 
 async def whoami() -> dict:

@@ -28,6 +28,7 @@ load_dotenv()
 
 from app import cliente_rl  # noqa: E402
 from app.sincronizacao import SincronizacaoError, diagnostico, sincronizar_cliente  # noqa: E402
+from app.provisionamento import ProvisionamentoError, provisionar_cliente_e_agente  # noqa: E402
 from app.core import agente_vr_client as agente  # noqa: E402
 
 logging.basicConfig(
@@ -45,13 +46,13 @@ HEARTBEAT_INTERVAL_S = float(os.getenv("HEARTBEAT_INTERVAL_S", "60"))
 RETRY_BACKOFF_S = float(os.getenv("RETRY_BACKOFF_S", "5"))
 
 
-async def _processar(pedido: dict) -> None:
+async def _processar_sincronizacao(pedido: dict) -> None:
     pedido_id = pedido["pedido_id"]
     client_id = pedido["client_id"]
     agent_id = pedido.get("agent_id")
     cclasstrib_lista = pedido.get("cclasstrib_lista") or []
 
-    log.info("processando pedido %s (client_id=%s)", pedido_id, client_id)
+    log.info("processando pedido %s (sincronizar, client_id=%s)", pedido_id, client_id)
     inicio = time.monotonic()
     try:
         resultado = await sincronizar_cliente(client_id, agent_id, cclasstrib_lista)
@@ -68,6 +69,39 @@ async def _processar(pedido: dict) -> None:
     resumo = analise_vr.resumir(resultado)
     await cliente_rl.entregar_resultado(pedido_id, status="concluido", resumo=resumo, resultado=resultado)
     log.info("pedido %s concluído em %.1fs", pedido_id, time.monotonic() - inicio)
+
+
+async def _processar_provisionamento(pedido: dict) -> None:
+    pedido_id = pedido["pedido_id"]
+    client_id = pedido["client_id"]
+    nome_cliente = pedido.get("nome_cliente") or client_id
+    agent_id = pedido.get("agent_id")
+    tier = pedido.get("tier") or "test"
+
+    log.info("processando pedido %s (provisionar, client_id=%s, agent_id=%s)",
+             pedido_id, client_id, agent_id)
+    inicio = time.monotonic()
+    try:
+        resultado = await provisionar_cliente_e_agente(client_id, nome_cliente, agent_id, tier)
+    except ProvisionamentoError as exc:
+        log.warning("pedido %s falhou: %s", pedido_id, exc)
+        await cliente_rl.entregar_resultado(pedido_id, status="erro", erro=str(exc))
+        return
+    except Exception as exc:  # noqa: BLE001
+        log.exception("pedido %s: falha inesperada", pedido_id)
+        await cliente_rl.entregar_resultado(pedido_id, status="erro", erro=f"erro interno: {exc}")
+        return
+
+    await cliente_rl.entregar_resultado(pedido_id, status="concluido", resumo={}, resultado=resultado)
+    log.info("pedido %s (provisionar) concluído em %.1fs", pedido_id, time.monotonic() - inicio)
+
+
+async def _processar(pedido: dict) -> None:
+    tipo = pedido.get("tipo") or "sincronizar"
+    if tipo == "provisionar":
+        await _processar_provisionamento(pedido)
+    else:
+        await _processar_sincronizacao(pedido)
 
 
 async def _ciclo_heartbeat() -> None:
@@ -113,6 +147,12 @@ def _checar_config() -> None:
     if faltando:
         log.error("configuração incompleta, faltando: %s — ver .env.example", ", ".join(faltando))
         sys.exit(1)
+    if not agente.provisionamento_configurado():
+        # não é fatal: sincronização continua funcionando sem isso, só o
+        # /provisionar do RL fica indisponível (a ponte reporta o erro por
+        # pedido, não recusa subir).
+        log.warning("AGENTE_VR_PROVISIONAMENTO_API_KEY ausente — pedidos de "
+                    "provisionamento vão falhar até configurar")
 
 
 async def main() -> None:
