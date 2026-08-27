@@ -145,8 +145,9 @@ async def _processar_corrigir(pedido: dict) -> None:
     configurar_banco."""
     pedido_id = pedido["pedido_id"]
     agent_id = pedido.get("agent_id")
-    task_id = pedido.get("task_id") or ""
-    params = pedido.get("params") or {}
+    correcao = pedido.get("correcao") or {}
+    task_id = correcao.get("task_id") or ""
+    params = correcao.get("params") or {}
     try:
         resultado = await agente.corrigir_agente(agent_id, task_id, params)
     except agente.AgenteVRError as exc:
