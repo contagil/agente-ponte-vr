@@ -137,6 +137,28 @@ async def _processar_configurar_banco(pedido: dict) -> None:
     await cliente_rl.entregar_resultado(pedido_id, status="concluido", resumo={}, resultado=resultado)
 
 
+async def _processar_corrigir(pedido: dict) -> None:
+    """RASCUNHO (Fase 3, branch draft/escrita-ncm-auto do agent-vr — ainda não
+    revisada com o time). Repassa a correção pro agent-vr e devolve o
+    desfecho JÁ RESOLVIDO (a chamada de lá espera dry-run + execução antes de
+    responder) — não tem um segundo polling aqui, ao contrário de
+    configurar_banco."""
+    pedido_id = pedido["pedido_id"]
+    agent_id = pedido.get("agent_id")
+    task_id = pedido.get("task_id") or ""
+    params = pedido.get("params") or {}
+    try:
+        resultado = await agente.corrigir_agente(agent_id, task_id, params)
+    except agente.AgenteVRError as exc:
+        await cliente_rl.entregar_resultado(pedido_id, status="erro", erro=f"[{exc.status_code}] {exc.mensagem}")
+        return
+    except Exception as exc:  # noqa: BLE001
+        log.exception("pedido %s: falha inesperada", pedido_id)
+        await cliente_rl.entregar_resultado(pedido_id, status="erro", erro=f"erro interno: {exc}")
+        return
+    await cliente_rl.entregar_resultado(pedido_id, status="concluido", resumo={}, resultado=resultado)
+
+
 async def _processar(pedido: dict) -> None:
     tipo = pedido.get("tipo") or "sincronizar"
     if tipo == "provisionar":
@@ -145,6 +167,8 @@ async def _processar(pedido: dict) -> None:
         await _processar_status_agente(pedido)
     elif tipo == "configurar_banco":
         await _processar_configurar_banco(pedido)
+    elif tipo == "corrigir":
+        await _processar_corrigir(pedido)
     else:
         await _processar_sincronizacao(pedido)
 

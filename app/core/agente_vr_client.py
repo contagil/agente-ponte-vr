@@ -252,6 +252,18 @@ async def configurar_banco_agente(agent_id: str, host: str, port: str, user: str
     )
 
 
+async def corrigir_agente(agent_id: str, task_id: str, params: dict) -> dict:
+    """RASCUNHO (Fase 3 do agent-vr, branch draft/escrita-ncm-auto — ainda não
+    revisada com o time). Cria a proposta de escrita, roda o dry-run e — se
+    passar — já executa, tudo numa chamada só (sem aprovador humano; ver
+    justificativa no próprio endpoint do agent-vr). Devolve o desfecho final
+    já resolvido: {proposal_id, status, affected_rows, committed, error}."""
+    return await _post_provisionamento(
+        f"/provisionamento/agentes/{agent_id}/corrigir",
+        {"task_id": task_id, "params": params},
+    )
+
+
 async def whoami() -> dict:
     """Sanidade da integração: confirma a chave e devolve o escopo concedido."""
     return await _get("/whoami")
