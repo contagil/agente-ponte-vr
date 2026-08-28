@@ -795,12 +795,19 @@ def analise_uf_municipio_cbs(estados, ibs_estadual, ibs_municipal, municipios, c
 # ---------------------------------------------------------------------------
 
 def analise_vinculo(produtos, vinculo_produto_linhas, vinculo_ncm_linhas,
-                    classificacoes, rfb_conn, hoje=None, limite_amostra=200):
+                    classificacoes, rfb_conn, hoje=None, limite_amostra=200,
+                    ean_lookup: dict | None = None):
     """
     produtos: produtos ativos por loja (id_produto, ncm1..3, ean, id_loja, descricao).
     vinculo_produto_linhas / vinculo_ncm_linhas: tabelas de vínculo do VR.
     classificacoes: id, cclasstrib, descricao, cst.
+    ean_lookup: {ean: {"ncm":..., "cltr_cd":...}} da base de produtos auditados
+    do RL (ver cliente_rl.lookup_ean) — pedido da Francilene: cruzar primeiro
+    por EAN (resposta precisa, um cClassTrib só) e cair pro cruzamento por
+    prefixo de NCM via NCM_APLICAVEL só quando o EAN não está na base ou não
+    está auditado.
     """
+    ean_lookup = ean_lookup or {}
     hoje = (hoje or date.today()).isoformat()
 
     vinculo_produto = {
@@ -856,6 +863,12 @@ def analise_vinculo(produtos, vinculo_produto_linhas, vinculo_ncm_linhas,
         cache_esperado[ncm] = esperado
         return esperado
 
+    def esperado_para_produto(ean, ncm):
+        info = ean_lookup.get(ean)
+        if info and info.get("cltr_cd"):
+            return {info["cltr_cd"]}, "ean"
+        return esperado_para_ncm(ncm), "ncm"
+
     contagem = {"SEM_VINCULO": 0, "VINCULO_POR_PRODUTO": 0, "VINCULO_POR_NCM": 0}
     divergencias = []
     sem_vinculo = []
@@ -882,7 +895,7 @@ def analise_vinculo(produtos, vinculo_produto_linhas, vinculo_ncm_linhas,
 
         cclasstrib_usado = info.get("cclasstrib")
         contagem[tipo] += 1
-        esperado = esperado_para_ncm(ncm)
+        esperado, fonte_esperado = esperado_para_produto(ean, ncm)
 
         if tipo == "VINCULO_POR_NCM" and (ncm, id_loja) in ncm_duplicado:
             status_linha = ("ERRO: NCM cadastrado em mais de uma Classificação Tributária "
@@ -901,6 +914,7 @@ def analise_vinculo(produtos, vinculo_produto_linhas, vinculo_ncm_linhas,
             sem_vinculo.append({
                 "id_produto": id_produto, "ean": ean, "descricao": descricao, "ncm": ncm,
                 "id_loja": id_loja, "cclasstrib_esperado": sorted(esperado) or None,
+                "fonte_esperado": fonte_esperado if esperado else None,
             })
         elif tipo == "VINCULO_POR_PRODUTO":
             vinculado_por_produto.append(linha_base)
@@ -912,6 +926,7 @@ def analise_vinculo(produtos, vinculo_produto_linhas, vinculo_ncm_linhas,
                 "id_produto": id_produto, "ean": ean, "descricao": descricao, "ncm": ncm,
                 "id_loja": id_loja, "tipo_vinculo": tipo,
                 "cclasstrib_usado": cclasstrib_usado, "cclasstrib_esperado": sorted(esperado),
+                "fonte_esperado": fonte_esperado,
             })
 
     return {

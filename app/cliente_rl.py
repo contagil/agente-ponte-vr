@@ -53,3 +53,28 @@ async def enviar_heartbeat(diagnostico: dict) -> None:
             f"{RL_BASE_URL}/agente-vr/ponte/heartbeat", headers=_headers(), json=diagnostico,
         )
     resp.raise_for_status()
+
+
+LOOKUP_EAN_LOTE = int(os.getenv("LOOKUP_EAN_LOTE", "5000"))
+
+
+async def lookup_ean(eans: list[str]) -> dict[str, dict]:
+    """NCM/cClassTrib oficiais por EAN, da base de produtos auditados que só
+    o RL alcança (banco separado, 72.60.159.95:5433). Em lotes porque um
+    cliente pode ter dezenas de milhares de EANs ativos distintos; falha de
+    um lote não derruba a análise inteira — devolve o que conseguiu."""
+    unicos = sorted({e for e in eans if e})
+    resultado: dict[str, dict] = {}
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_S) as client:
+        for i in range(0, len(unicos), LOOKUP_EAN_LOTE):
+            lote = unicos[i:i + LOOKUP_EAN_LOTE]
+            try:
+                resp = await client.post(
+                    f"{RL_BASE_URL}/agente-vr/ponte/lookup-ean",
+                    headers=_headers(), json={"eans": lote},
+                )
+                resp.raise_for_status()
+                resultado.update(resp.json().get("resultados", {}))
+            except httpx.HTTPError:
+                continue
+    return resultado

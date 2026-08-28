@@ -12,6 +12,7 @@ from datetime import date, datetime, timezone
 
 from app.core import agente_vr_client as agente
 from app.core import analise_vr, rfb_reference
+from app import cliente_rl
 
 # Consultas do catálogo do cérebro, agrupadas por análise. O task_id vem de
 # env var (`AGENTE_VR_TASK_<CHAVE>`) porque o nome é acordado com quem cadastra
@@ -189,9 +190,18 @@ async def sincronizar_cliente(client_id: str, agent_id: str | None,
                 )
 
             if "vinculo" not in indisponiveis:
+                eans = [p.get("ean") for p in coletas["vinculo_produtos"]]
+                try:
+                    ean_lookup = await cliente_rl.lookup_ean(eans)
+                except Exception:
+                    # cruzamento por EAN é um refinamento, não pré-requisito — se o
+                    # RL estiver fora do ar, a análise segue só com NCM (comportamento
+                    # de antes desta mudança), não derruba a sincronização inteira
+                    ean_lookup = {}
                 analise_7 = analise_vr.analise_vinculo(
                     coletas["vinculo_produtos"], coletas["vinculo_produto"],
                     coletas["vinculo_ncm"], coletas["classificacoes"], rfb_conn,
+                    ean_lookup=ean_lookup,
                 )
                 analise_vr.aplicar_contagem_efetiva_cclasstrib(analise_3, analise_7)
                 resultado["analise_7_vinculo"] = analise_vr.enxugar_vinculo(analise_7)
