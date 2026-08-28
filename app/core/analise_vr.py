@@ -451,11 +451,14 @@ def analise_cclasstrib(cclasstrib_cadastradas, vinculo_ncm, vinculo_produto,
     # quais CClassTrib o sortimento real do cliente exigiria, via NCM_APLICAVEL
     # (a tabela oficial casa por prefixo de NCM, daí os cortes 2/4/6/7/8)
     aplicaveis = set()
+    ncms_por_cclasstrib: dict[str, set[str]] = {}
     for ncm in ncms_ativos:
         for length in (2, 4, 6, 7, 8):
             for cltr_id in by_prefix.get(ncm[:length], []):
                 if cltr_id in cltr_info:
-                    aplicaveis.add(cltr_info[cltr_id]["cd"])
+                    cd = cltr_info[cltr_id]["cd"]
+                    aplicaveis.add(cd)
+                    ncms_por_cclasstrib.setdefault(cd, set()).add(ncm)
 
     cadastrados_cd = {_txt(v.get("cclasstrib")) for v in cclasstrib_cadastradas}
     faltando_no_sortimento = sorted(aplicaveis - cadastrados_cd)
@@ -464,7 +467,8 @@ def analise_cclasstrib(cclasstrib_cadastradas, vinculo_ncm, vinculo_produto,
         "cclasstrib_cadastrados": validacao,
         "cclasstrib_aplicaveis_pelo_sortimento_nao_cadastrados": [
             {"cclasstrib": cd, "descricao": cltr_by_cd[cd]["descricao"],
-             "cst": cltr_by_cd[cd]["cst"]}
+             "cst": cltr_by_cd[cd]["cst"],
+             "ncms_vinculados": sorted(ncms_por_cclasstrib.get(cd, ()))}
             for cd in faltando_no_sortimento
         ],
         "total_ncms_ativos_analisados": len(ncms_ativos),
