@@ -641,6 +641,7 @@ def analise_uf_municipio_cbs(estados, ibs_estadual, ibs_municipal, municipios, c
         else:
             status = "OK"
         uf_status.append({
+            "id": r["id"], "id_estado": r["id_estado"],
             "sigla": sigla, "descricao": desc, "porcentagem": r["porcentagem"],
             "datainicio": _iso(r["di"]), "datatermino": _iso(r["df"]), "status": status,
         })
@@ -660,6 +661,7 @@ def analise_uf_municipio_cbs(estados, ibs_estadual, ibs_municipal, municipios, c
         })
         if id_estado not in ufs_com_registro:
             uf_status.append({
+                "id": None, "id_estado": id_estado,
                 "sigla": _txt(e.get("sigla")), "descricao": _txt(e.get("descricao")),
                 "porcentagem": None, "datainicio": None, "datatermino": None,
                 "status": "SEM CADASTRO",
@@ -769,6 +771,10 @@ def analise_uf_municipio_cbs(estados, ibs_estadual, ibs_municipal, municipios, c
         "cbs_vigente_no_ano": any(r["ativo"] and vigente_no_ano(r["di"], r["df"]) for r in registros_cbs),
         "uf_status": uf_status,
         "municipio_registros": municipio_registros,
+        "vigencias_oficiais_uf": [
+            {"datainicio": _iso(p[0]), "datatermino": _iso(p[1]), "porcentagem": p[2]}
+            for p in vig_ibsuf
+        ],
     }
 
 
