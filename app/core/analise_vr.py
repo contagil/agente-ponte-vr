@@ -938,6 +938,11 @@ def analise_vinculo(produtos, vinculo_produto_linhas, vinculo_ncm_linhas,
         "vinculado_por_ncm_completo": vinculado_por_ncm,
         "amostra_sem_vinculo": sem_vinculo[:limite_amostra],
         "amostra_possivel_erro_classificacao": divergencias[:limite_amostra],
+        # listas completas (sem corte) pra tela de correção — seleção
+        # individual com busca/paginação exige o conjunto inteiro, não só a
+        # amostra de 200 usada pra exibição/diagnóstico
+        "sem_vinculo_completo": sem_vinculo,
+        "divergencias_completo": divergencias,
     }
 
 
