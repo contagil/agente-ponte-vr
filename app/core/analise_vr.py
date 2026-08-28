@@ -1108,7 +1108,12 @@ def _so_digitos(texto):
 
 def _regra_tiposaida_por_cfop(cfoptiposaida, ts_por_id, lista_cfop, campo,
                               alvos_validos, descricao_alvo, movimento,
-                              operacoes_sem_cadastro_por_cfop, orientacao=None):
+                              operacoes_sem_cadastro_por_cfop, orientacao=None,
+                              campo2=None, alvos_validos2=None, descricao_alvo2=None):
+    """campo2/alvos_validos2/descricao_alvo2: checagem adicional opcional (ex.:
+    baixa de estoque por perda precisa TANTO do débito 07 QUANTO do cClassTrib
+    410030 — no código original só o débito era validado, "não validada a
+    cClassTrib pois na época do desenvolvimento não tinha")."""
     operacoes_sem_cadastro = sum(operacoes_sem_cadastro_por_cfop.get(c, 0) for c in lista_cfop)
 
     linhas = [
@@ -1135,14 +1140,27 @@ def _regra_tiposaida_por_cfop(cfoptiposaida, ts_por_id, lista_cfop, campo,
         valor_campo = _vinculo_cfoptiposaida(_json(l.get("linha")), ts, campo)
         qtd_mov = movimento.get((id_ts, _so_digitos(cfop)), 0)
 
+        problemas = []
         if not alvos_validos:
-            status = f"ERRO: {descricao_alvo} não está cadastrado no banco"
+            problemas.append(f"{descricao_alvo} não está cadastrado no banco")
         elif not valor_campo:
-            status = f"ERRO: sem vínculo no campo Reforma Tributária (deveria ser {descricao_alvo})"
+            problemas.append(f"sem vínculo no campo Reforma Tributária (deveria ser {descricao_alvo})")
+        elif valor_campo not in alvos_validos:
+            problemas.append(f"vinculado a um código diferente de {descricao_alvo}")
+
+        if campo2:
+            valor_campo2 = _vinculo_cfoptiposaida(_json(l.get("linha")), ts, campo2)
+            if not alvos_validos2:
+                problemas.append(f"{descricao_alvo2} não está cadastrado no banco")
+            elif not valor_campo2:
+                problemas.append(f"sem vínculo de {descricao_alvo2}")
+            elif valor_campo2 not in alvos_validos2:
+                problemas.append(f"vinculado a um código diferente de {descricao_alvo2}")
+
+        if problemas:
+            status = "ERRO: " + " | ".join(problemas)
             if orientacao:
                 status += f" | {orientacao}"
-        elif valor_campo not in alvos_validos:
-            status = f"ERRO: vinculado a um código diferente de {descricao_alvo}"
         else:
             status = "OK"
 
@@ -1161,12 +1179,17 @@ def _regra_tiposaida_por_cfop(cfoptiposaida, ts_por_id, lista_cfop, campo,
 
 
 def analise_tiposaida(tiposaida, cfoptiposaida, debitocredito, cclasstrib_cadastradas,
-                      movimento_linhas=None, sem_cadastro_linhas=None):
+                      movimento_linhas=None, sem_cadastro_linhas=None, rfb_conn=None, hoje=None):
     """
     movimento_linhas / sem_cadastro_linhas: cruzamento com a escrituração fiscal
     real; opcionais — sem eles a regra de cadastro continua valendo, só não há
     a informação de "chegou a ser usado" nem a checagem de operação sem cadastro.
+    rfb_conn: se passado, busca descrição/CST oficiais dos cClassTrib alvo
+    (410002, 410030) na base RFB — necessário pra correção conseguir CRIAR a
+    classificação quando ela nem está cadastrada ainda (caso comum: o banco
+    não tem 410002/410030 cadastrado, não só sem vínculo).
     """
+    hoje = (hoje or date.today()).isoformat()
     ts_por_id = {_txt(t.get("id")): t for t in tiposaida}
 
     # os alvos não são id fixo: variam de banco para banco, então são
@@ -1182,11 +1205,30 @@ def analise_tiposaida(tiposaida, cfoptiposaida, debitocredito, cclasstrib_cadast
         if _txt(c.get("cclasstrib")) == "410002"
         and _int(c.get("id_situacaocadastro"), 1) == 1
     }
+    alvo_perda_cclasstrib = {
+        _txt(c.get("id")) for c in cclasstrib_cadastradas
+        if _txt(c.get("cclasstrib")) == "410030"
+        and _int(c.get("id_situacaocadastro"), 1) == 1
+    }
     alvos_bonificacao = {
         _txt(c.get("id")) for c in cclasstrib_cadastradas
         if _txt(c.get("cclasstrib")) in ("410001", "410003", "410026")
         and _int(c.get("id_situacaocadastro"), 1) == 1
     }
+
+    cclasstrib_oficial = {}
+    if rfb_conn is not None:
+        rcur = rfb_conn.cursor()
+        rcur.execute(
+            "SELECT ct.CLTR_CD, ct.CLTR_DESCRICAO, s.SITR_CD "
+            "FROM CLASSIFICACAO_TRIBUTARIA ct JOIN SITUACAO_TRIBUTARIA s ON s.SITR_ID = ct.CLTR_SITR_ID "
+            "WHERE ct.CLTR_CD IN ('410002', '410030') "
+            "AND ct.CLTR_INICIO_VIGENCIA <= ? AND (ct.CLTR_FIM_VIGENCIA IS NULL OR ct.CLTR_FIM_VIGENCIA >= ?)",
+            (hoje, hoje),
+        )
+        for cd, descricao, cst in rcur.fetchall():
+            cclasstrib_oficial[cd] = {"cclasstrib": cd, "descricao": descricao, "cst": cst}
+        rcur.close()
 
     movimento = {
         (_txt(m.get("id_tiposaida")), _so_digitos(_txt(m.get("cfop")))): _int(m.get("qtd"))
@@ -1200,6 +1242,8 @@ def analise_tiposaida(tiposaida, cfoptiposaida, debitocredito, cclasstrib_cadast
     baixa_estoque = _regra_tiposaida_por_cfop(
         cfoptiposaida, ts_por_id, CFOP_BAIXA_ESTOQUE_PERDA, "id_debitocredito",
         alvo_debito_perda, "Débito 07 - Perda em estoque", movimento, sem_cadastro,
+        campo2="id_classificacaotributaria", alvos_validos2=alvo_perda_cclasstrib,
+        descricao_alvo2="cClassTrib 410030 (Perdas)",
     )
     transferencia = _regra_tiposaida_por_cfop(
         cfoptiposaida, ts_por_id, CFOP_TRANSFERENCIA_MERCADORIA, "id_classificacaotributaria",
@@ -1214,12 +1258,15 @@ def analise_tiposaida(tiposaida, cfoptiposaida, debitocredito, cclasstrib_cadast
 
     return {
         "debito_perda_encontrado": bool(alvo_debito_perda),
+        "cclasstrib_perda_encontrado": bool(alvo_perda_cclasstrib),
         "cclasstrib_transferencia_encontrado": bool(alvo_transferencia),
         "cclasstrib_bonificacao_encontrado": bool(alvos_bonificacao),
         "movimento_disponivel": movimento_linhas is not None,
         "baixa_estoque": baixa_estoque,
         "transferencia": transferencia,
         "bonificacao": bonificacao,
+        "cclasstrib_oficial_410002": cclasstrib_oficial.get("410002"),
+        "cclasstrib_oficial_410030": cclasstrib_oficial.get("410030"),
     }
 
 

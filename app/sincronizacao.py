@@ -216,6 +216,7 @@ async def sincronizar_cliente(client_id: str, agent_id: str | None,
                     coletas["debitocredito"], coletas["cclasstrib"],
                     movimento_linhas=coletas.get("movimento_tiposaida"),
                     sem_cadastro_linhas=coletas.get("operacoes_sem_tiposaida"),
+                    rfb_conn=rfb_conn,
                 )
 
             if "parametro_data" not in indisponiveis and "uf_municipio_cbs" not in indisponiveis:
