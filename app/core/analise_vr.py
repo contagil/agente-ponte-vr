@@ -1351,6 +1351,143 @@ def analise_eventos(tipoautor, tipoevento, totais=None):
 
 
 # ---------------------------------------------------------------------------
+# Análise 12 - Ajuste de preço pós-reforma tributária
+# ---------------------------------------------------------------------------
+#
+# Fórmula (confirmada com o cliente, 28/08/2026):
+#   imposto_antigo = preço × (%ICMS + (monofásico ? 0 : %PIS + %COFINS))
+#   imposto_novo   = preço × (%CBS_efetiva + %IBS_efetiva)
+#     %CBS_efetiva = aliquotazero ? 0 : %CBS_cheia × (1 − %redução)
+#     %IBS_efetiva = aliquotazero ? 0 : (%IBS_estadual_loja + %IBS_municipal_loja) × (1 − %redução)
+#   preço_novo = preço_atual − imposto_antigo + imposto_novo
+#
+# "diferimento" NÃO entra na conta (decisão do cliente: só adia recolhimento,
+# não muda o preço ao consumidor). Monofásico (cst.grupoibscbsmono) zera só o
+# PIS/COFINS embutido — o CBS/IBS continua sendo calculado normalmente,
+# porque no exemplo de referência (SHAMPOO) o CBS aparecia cheio mesmo com
+# PIS/COFINS monofásico.
+#
+# PIS/COFINS usa o vínculo direto produto.id_tipopiscofins (mais simples que
+# o vínculo por grupo econômico em produtopiscofins) — é uma simplificação
+# deliberada da primeira versão, documentada aqui e repetida na explicação
+# que aparece no front pro cliente ver exatamente o que está sendo cruzado.
+
+TBTO_ID_CBS_PRECO = 2  # mesmo id de analise_uf_municipio_cbs
+
+
+def _percentual_vigente(periodos, hoje):
+    """periodos: [(inicio, fim, valor)] de _carregar_vigencias_oficiais.
+    Devolve o valor vigente na data, ou None se não achar período."""
+    for di, df, valor in periodos:
+        if di and di <= hoje and (df is None or hoje <= df):
+            return float(valor)
+    return None
+
+
+def analise_ajuste_preco(linhas, ibs_estadual, ibs_municipal, rfb_conn, hoje=None):
+    """
+    linhas: reforma_ajuste_preco (1 por produto ativo × loja com preço > 0).
+    ibs_estadual / ibs_municipal: mesmas linhas cruas usadas em
+    analise_uf_municipio_cbs (id_estado/id_municipio, porcentagem, vigência).
+    """
+    hoje_data = hoje or date.today()
+    hoje_iso = hoje_data.isoformat()
+
+    vig_cbs = _carregar_vigencias_oficiais(rfb_conn, TBTO_ID_CBS_PRECO)
+    cbs_cheia = _percentual_vigente(vig_cbs, hoje_data)
+
+    def _pct_vigente_por_chave(linhas_ibs, campo_chave):
+        por_chave: dict[str, list] = {}
+        for r in linhas_ibs:
+            chave = _txt(r.get(campo_chave))
+            di, df = _data(r.get("datainicio")), _data(r.get("datatermino"))
+            pct = _float(r.get("porcentagem"))
+            if di:
+                por_chave.setdefault(chave, []).append((di, df, pct))
+        return {
+            chave: _percentual_vigente(periodos, hoje_data)
+            for chave, periodos in por_chave.items()
+        }
+
+    ibs_uf_por_estado = _pct_vigente_por_chave(ibs_estadual, "id_estado")
+    ibs_mun_por_municipio = _pct_vigente_por_chave(ibs_municipal, "id_municipio")
+
+    resultado = []
+    sem_dado_suficiente = 0
+    for linha in linhas:
+        preco = _float(linha.get("precovenda"))
+        if not preco:
+            continue
+        id_produto = _txt(linha.get("id_produto"))
+        id_loja = _txt(linha.get("id_loja"))
+        descricao = _txt(linha.get("descricao"))
+        ncm = _fmt_ncm(linha.get("ncm1"), linha.get("ncm2"), linha.get("ncm3"))
+
+        pct_icms = _float(linha.get("aliquota_icms")) or 0.0
+        monofasico = _bool(linha.get("grupoibscbsmono"))
+        pct_pis = 0.0 if monofasico else (_float(linha.get("valorpis")) or 0.0)
+        pct_cofins = 0.0 if monofasico else (_float(linha.get("valorcofins")) or 0.0)
+        imposto_antigo = preco * (pct_icms + pct_pis + pct_cofins) / 100
+
+        cclasstrib = _txt(linha.get("cclasstrib"))
+        aliquotazero = _bool(linha.get("aliquotazero"))
+        pct_reducao = _float(linha.get("reducao")) or 0.0
+
+        id_estado = _txt(linha.get("id_estado"))
+        id_municipio = _txt(linha.get("id_municipio"))
+        pct_ibs_uf = ibs_uf_por_estado.get(id_estado)
+        pct_ibs_mun = ibs_mun_por_municipio.get(id_municipio)
+
+        faltando = []
+        if not cclasstrib:
+            faltando.append("sem classificação tributária vinculada (produto ou NCM)")
+        if cbs_cheia is None:
+            faltando.append("alíquota oficial de CBS não encontrada na base RFB")
+        if pct_ibs_uf is None:
+            faltando.append("IBS estadual não cadastrado/vigente para a UF da loja")
+        if pct_ibs_mun is None:
+            faltando.append("IBS municipal não cadastrado/vigente para o município da loja")
+
+        if faltando:
+            sem_dado_suficiente += 1
+            resultado.append({
+                "id_produto": id_produto, "id_loja": id_loja, "descricao": descricao, "ncm": ncm,
+                "preco_atual": round(preco, 4), "cclasstrib": cclasstrib or None,
+                "status": "SEM DADO SUFICIENTE: " + "; ".join(faltando),
+            })
+            continue
+
+        fator_reducao = 0.0 if aliquotazero else (1 - pct_reducao / 100)
+        pct_cbs_efetiva = 0.0 if aliquotazero else cbs_cheia * fator_reducao
+        pct_ibs_efetiva = 0.0 if aliquotazero else (pct_ibs_uf + pct_ibs_mun) * fator_reducao
+        imposto_novo = preco * (pct_cbs_efetiva + pct_ibs_efetiva) / 100
+
+        preco_novo = preco - imposto_antigo + imposto_novo
+
+        resultado.append({
+            "id_produto": id_produto, "id_loja": id_loja, "descricao": descricao, "ncm": ncm,
+            "cclasstrib": cclasstrib, "monofasico": monofasico,
+            "aliquotazero": aliquotazero, "reducao_pct": pct_reducao,
+            "preco_atual": round(preco, 4),
+            "icms_pct": round(pct_icms, 4), "pis_pct": round(pct_pis, 4), "cofins_pct": round(pct_cofins, 4),
+            "imposto_antigo": round(imposto_antigo, 4),
+            "cbs_cheia_pct": round(cbs_cheia, 4), "ibs_uf_pct": round(pct_ibs_uf, 4), "ibs_municipal_pct": round(pct_ibs_mun, 4),
+            "imposto_novo": round(imposto_novo, 4),
+            "preco_novo": round(preco_novo, 4),
+            "diferenca": round(preco_novo - preco, 4),
+            "status": "OK",
+        })
+
+    return {
+        "hoje": hoje_iso,
+        "cbs_cheia_pct": round(cbs_cheia, 4) if cbs_cheia is not None else None,
+        "total_analisado": len(resultado),
+        "total_sem_dado_suficiente": sem_dado_suficiente,
+        "itens": resultado,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Análise 9 - parâmetro "Data envio IBS/CBS" (NF Saída x PDV/NFC-e)
 # ---------------------------------------------------------------------------
 

@@ -57,6 +57,10 @@ GRUPOS: dict[str, dict] = {
         "obrigatorio": False,
         "chaves": ["parametro_nfe", "parametro_pdv"],
     },
+    "ajuste_preco": {
+        "obrigatorio": False,
+        "chaves": ["ajuste_preco"],
+    },
     "eventos": {
         "obrigatorio": False,
         "chaves": ["tipoautor", "tipoevento", "eventos_totais"],
@@ -76,6 +80,7 @@ _CHAVE_RESULTADO = {
     "debito_credito": "analise_8_debito_credito",
     "parametro_data": "analise_9_parametro_data_ibscbs",
     "eventos": "analise_10_eventos",
+    "ajuste_preco": "analise_12_ajuste_preco",
 }
 
 _TASK_IDS_PADRAO = {
@@ -107,6 +112,7 @@ _TASK_IDS_PADRAO = {
     "tipoevento": "reforma_tipoevento",
     "eventos_totais": "reforma_eventos_totais",
     "empresas": "reforma_empresas",
+    "ajuste_preco": "reforma_ajuste_preco",
 }
 
 TAREFAS = {
@@ -188,6 +194,16 @@ async def sincronizar_cliente(client_id: str, agent_id: str | None,
                     coletas["estados"], coletas["ibs_estadual"], coletas["ibs_municipal"],
                     coletas["municipios"], coletas["cbs"], rfb_conn,
                 )
+
+            if "ajuste_preco" not in indisponiveis and "uf_municipio_cbs" not in indisponiveis:
+                resultado["analise_12_ajuste_preco"] = analise_vr.analise_ajuste_preco(
+                    coletas["ajuste_preco"], coletas["ibs_estadual"], coletas["ibs_municipal"], rfb_conn,
+                )
+            elif "ajuste_preco" not in indisponiveis:
+                resultado["analise_12_ajuste_preco"] = {
+                    "indisponivel": True,
+                    "motivo": "depende do IBS estadual/municipal (grupo UF/Município/CBS), que está indisponível",
+                }
 
             if "vinculo" not in indisponiveis:
                 eans = [p.get("ean") for p in coletas["vinculo_produtos"]]
