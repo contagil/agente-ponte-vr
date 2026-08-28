@@ -1015,20 +1015,35 @@ def _vinculo_cfoptiposaida(linha_cfop: dict, tiposaida: dict, campo: str):
 
 def analise_debito_credito(tipodebitocredito, debitocredito, tiposaida, cfoptiposaida):
     registros = []
+    cadastrados_por_tipo: dict[str, set] = {"D": set(), "C": set()}
     for linha in debitocredito:
         cod_xml = _txt(linha.get("cod_xml"))
         cod_str = f"{int(cod_xml):02d}" if cod_xml.isdigit() else None
         sigla_up = _txt(linha.get("sigla")).upper()
+        sigla1 = sigla_up[:1] if sigla_up[:1] in ("D", "C") else None
         tipo_desc = _txt(linha.get("tipo_descricao"))
         tabela_valida = CODIGOS_DEBITO_VALIDOS if sigla_up.startswith("D") else CODIGOS_CREDITO_VALIDOS
         if cod_str not in tabela_valida:
             status = f"ERRO: código {cod_str} não previsto na NT 2025.002 v1.36 para tipo {tipo_desc}"
         else:
             status = "OK"
+        if sigla1 and cod_str:
+            cadastrados_por_tipo[sigla1].add(cod_str)
         registros.append({
             "tipo": tipo_desc, "cod_xml": cod_str, "descricao": _txt(linha.get("descricao")),
             "ativo": _int(linha.get("id_situacaocadastro")) == 1, "status": status,
         })
+
+    # códigos previstos na NT que ainda não têm cadastro nenhum (nem
+    # ativo nem inativo) pra esse tipo — candidatos a "SEM CADASTRO"
+    codigos_faltando = []
+    for sigla, tabela in (("D", CODIGOS_DEBITO_VALIDOS), ("C", CODIGOS_CREDITO_VALIDOS)):
+        for cod, desc in tabela.items():
+            if cod not in cadastrados_por_tipo[sigla]:
+                codigos_faltando.append({
+                    "sigla": sigla, "tipo": "DÉBITO" if sigla == "D" else "CRÉDITO",
+                    "cod_xml": cod, "descricao": desc,
+                })
 
     ts_por_id = {_txt(t.get("id")): t for t in tiposaida}
     cfop_por_ts = {}
@@ -1053,6 +1068,7 @@ def analise_debito_credito(tipodebitocredito, debitocredito, tiposaida, cfoptipo
         "configurado": (len(tipodebitocredito) > 0 and len(debitocredito) > 0
                         and len(vinculados) > 0),
         "registros": registros,
+        "codigos_sem_cadastro": codigos_faltando,
     }
 
 
