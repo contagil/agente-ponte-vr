@@ -696,6 +696,7 @@ def analise_uf_municipio_cbs(estados, ibs_estadual, ibs_municipal, municipios, c
         else:
             status = "OK"
         municipio_registros.append({
+            "id": r["id"], "id_municipio": r["id_municipio"],
             "municipio": r["municipio"], "sigla": r["sigla"], "porcentagem": r["porcentagem"],
             "datainicio": _iso(r["di"]), "datatermino": _iso(r["df"]), "status": status,
         })
@@ -710,19 +711,26 @@ def analise_uf_municipio_cbs(estados, ibs_estadual, ibs_municipal, municipios, c
         if _bool(m.get("cadastrado")):
             g["cadastrados"] += 1
         else:
-            g["faltantes"].append(_txt(m.get("municipio")))
+            g["faltantes"].append({
+                "id_municipio": _txt(m.get("id_municipio")), "municipio": _txt(m.get("municipio")),
+            })
 
+    # sem LIMITE_LISTA aqui de propósito: a correção precisa que o cliente
+    # consiga selecionar QUALQUER município faltante (não só os 500
+    # primeiros), senão parte da UF fica impossível de corrigir pela tela.
     municipio_faltando = []
     municipio_inconsistente = []
     for sigla, g in sorted(por_uf.items()):
         if not g["faltantes"]:
             continue
         if g["cadastrados"] == 0:
-            municipio_faltando.append({"sigla": sigla, "qtd_sem_vigencia": len(g["faltantes"])})
+            municipio_faltando.append({
+                "sigla": sigla, "qtd_sem_vigencia": len(g["faltantes"]), "municipios": g["faltantes"],
+            })
         else:
-            for desc in g["faltantes"]:
+            for f in g["faltantes"]:
                 municipio_inconsistente.append({
-                    "sigla": sigla, "municipio": desc,
+                    "sigla": sigla, "id_municipio": f["id_municipio"], "municipio": f["municipio"],
                     "status": ("INCONSISTÊNCIA: esta UF já possui outro(s) município(s) "
                                "cadastrado(s), mas este não está"),
                 })
@@ -774,6 +782,10 @@ def analise_uf_municipio_cbs(estados, ibs_estadual, ibs_municipal, municipios, c
         "vigencias_oficiais_uf": [
             {"datainicio": _iso(p[0]), "datatermino": _iso(p[1]), "porcentagem": p[2]}
             for p in vig_ibsuf
+        ],
+        "vigencias_oficiais_municipal": [
+            {"datainicio": _iso(p[0]), "datatermino": _iso(p[1]), "porcentagem": p[2]}
+            for p in vig_ibsmun
         ],
     }
 
