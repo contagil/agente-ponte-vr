@@ -65,6 +65,10 @@ GRUPOS: dict[str, dict] = {
         "obrigatorio": False,
         "chaves": ["tipoautor", "tipoevento", "eventos_totais"],
     },
+    "correcao_cadastral": {
+        "obrigatorio": False,
+        "chaves": ["correcao_cadastral_produtos"],
+    },
     "empresas": {
         "obrigatorio": False,
         "chaves": ["empresas"],
@@ -81,6 +85,7 @@ _CHAVE_RESULTADO = {
     "parametro_data": "analise_9_parametro_data_ibscbs",
     "eventos": "analise_10_eventos",
     "ajuste_preco": "analise_12_ajuste_preco",
+    "correcao_cadastral": "analise_13_correcao_cadastral",
 }
 
 _TASK_IDS_PADRAO = {
@@ -113,6 +118,7 @@ _TASK_IDS_PADRAO = {
     "eventos_totais": "reforma_eventos_totais",
     "empresas": "reforma_empresas",
     "ajuste_preco": "reforma_ajuste_preco",
+    "correcao_cadastral_produtos": "reforma_correcao_cadastral_produtos",
 }
 
 TAREFAS = {
@@ -204,6 +210,16 @@ async def sincronizar_cliente(client_id: str, agent_id: str | None,
                     "indisponivel": True,
                     "motivo": "depende do IBS estadual/municipal (grupo UF/Município/CBS), que está indisponível",
                 }
+
+            if "correcao_cadastral" not in indisponiveis:
+                eans_cadastral = [p.get("ean") for p in coletas["correcao_cadastral_produtos"]]
+                try:
+                    ean_lookup_cadastral = await cliente_rl.lookup_ean(eans_cadastral)
+                except Exception:
+                    ean_lookup_cadastral = {}
+                resultado["analise_13_correcao_cadastral"] = analise_vr.analise_correcao_cadastral(
+                    coletas["correcao_cadastral_produtos"], ean_lookup=ean_lookup_cadastral,
+                )
 
             if "vinculo" not in indisponiveis:
                 eans = [p.get("ean") for p in coletas["vinculo_produtos"]]

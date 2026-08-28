@@ -1488,6 +1488,63 @@ def analise_ajuste_preco(linhas, ibs_estadual, ibs_municipal, rfb_conn, hoje=Non
 
 
 # ---------------------------------------------------------------------------
+# Análise 13 - Correção cadastral (descrição e NCM) x base auditada por EAN
+# ---------------------------------------------------------------------------
+# Pedido do cliente: "Correção Cadastral" tem 3 partes — Ajuste de
+# Mercadológico, Padronização de Descrição, Correção de NCM. Mercadológico
+# fica de fora por enquanto: a base de produtos auditados só tem um campo
+# `genero` numérico sem tabela de tradução conhecida pro mercadologico1-5
+# (árvore de 5 níveis) do VR — pendente até ter uma fonte de mapeamento clara.
+
+def analise_correcao_cadastral(produtos, ean_lookup: dict | None = None):
+    """
+    produtos: reforma_correcao_cadastral_produtos (1 por produto ativo, com EAN).
+    ean_lookup: {ean: {"ncm":..., "cclasstrib":..., "descricao":...}} da base
+    de produtos auditados (cliente_rl.lookup_ean) — mesma fonte usada em
+    Vínculos.
+    """
+    ean_lookup = ean_lookup or {}
+    descricao_divergente = []
+    ncm_divergente = []
+    total_com_referencia = 0
+
+    for linha in produtos:
+        ean = _txt(linha.get("ean"))
+        if not ean:
+            continue
+        ref = ean_lookup.get(ean)
+        if not ref:
+            continue
+        total_com_referencia += 1
+
+        id_produto = _txt(linha.get("id_produto"))
+        desc_vr = _txt(linha.get("descricaocompleta"))
+        desc_ref = _txt(ref.get("descricao"))
+        if desc_ref and _normalizar_texto(desc_vr) != _normalizar_texto(desc_ref):
+            descricao_divergente.append({
+                "id_produto": id_produto, "ean": ean,
+                "descricao_vr": desc_vr, "descricao_sugerida": desc_ref,
+            })
+
+        ncm_vr = _fmt_ncm(linha.get("ncm1"), linha.get("ncm2"), linha.get("ncm3"))
+        ncm_ref = _so_digitos(_txt(ref.get("ncm")))
+        if ncm_ref and len(ncm_ref) == 8 and ncm_ref != ncm_vr:
+            ncm_divergente.append({
+                "id_produto": id_produto, "ean": ean,
+                "ncm_vr": ncm_vr, "ncm_sugerido": ncm_ref,
+                "ncm1_sugerido": int(ncm_ref[:4]), "ncm2_sugerido": int(ncm_ref[4:6]), "ncm3_sugerido": int(ncm_ref[6:8]),
+            })
+
+    return {
+        "total_produtos_analisados": len(produtos),
+        "total_com_referencia_auditada": total_com_referencia,
+        "descricao_divergente": descricao_divergente,
+        "ncm_divergente": ncm_divergente,
+        "mercadologico_disponivel": False,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Análise 9 - parâmetro "Data envio IBS/CBS" (NF Saída x PDV/NFC-e)
 # ---------------------------------------------------------------------------
 
