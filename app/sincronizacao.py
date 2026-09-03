@@ -168,6 +168,31 @@ async def sincronizar_cliente(client_id: str, agent_id: str | None,
             for chave in grupo["chaves"]:
                 coletas.pop(chave, None)
 
+    # Buscas de EAN via HTTP (async de verdade, precisam do event loop) —
+    # calculadas AQUI, fora de rodar_analises(), porque essa função roda numa
+    # thread separada (asyncio.to_thread) sem loop nenhum: um `await` lá
+    # dentro é SyntaxError ('await' outside async function), não um erro de
+    # runtime — quebra a importação do módulo inteiro e derruba a ponte em
+    # loop de crash. Resultado guardado e só lido (via closure) lá dentro.
+    ean_lookup_cadastral: dict[str, dict] = {}
+    if "correcao_cadastral" not in indisponiveis:
+        eans_cadastral = [p.get("ean") for p in coletas["correcao_cadastral_produtos"]]
+        try:
+            ean_lookup_cadastral = await cliente_rl.lookup_ean(eans_cadastral)
+        except Exception:
+            ean_lookup_cadastral = {}
+
+    ean_lookup: dict[str, dict] = {}
+    if "vinculo" not in indisponiveis:
+        eans = [p.get("ean") for p in coletas["vinculo_produtos"]]
+        try:
+            ean_lookup = await cliente_rl.lookup_ean(eans)
+        except Exception:
+            # cruzamento por EAN é um refinamento, não pré-requisito — se o
+            # RL estiver fora do ar, a análise segue só com NCM (comportamento
+            # de antes desta mudança), não derruba a sincronização inteira
+            ean_lookup = {}
+
     def rodar_analises() -> dict:
         """Roda fora do event loop: monta/lê o SQLite da RFB e o JSON de NCM
         (~3MB), ambos bloqueantes."""
@@ -212,24 +237,11 @@ async def sincronizar_cliente(client_id: str, agent_id: str | None,
                 }
 
             if "correcao_cadastral" not in indisponiveis:
-                eans_cadastral = [p.get("ean") for p in coletas["correcao_cadastral_produtos"]]
-                try:
-                    ean_lookup_cadastral = await cliente_rl.lookup_ean(eans_cadastral)
-                except Exception:
-                    ean_lookup_cadastral = {}
                 resultado["analise_13_correcao_cadastral"] = analise_vr.analise_correcao_cadastral(
                     coletas["correcao_cadastral_produtos"], ean_lookup=ean_lookup_cadastral,
                 )
 
             if "vinculo" not in indisponiveis:
-                eans = [p.get("ean") for p in coletas["vinculo_produtos"]]
-                try:
-                    ean_lookup = await cliente_rl.lookup_ean(eans)
-                except Exception:
-                    # cruzamento por EAN é um refinamento, não pré-requisito — se o
-                    # RL estiver fora do ar, a análise segue só com NCM (comportamento
-                    # de antes desta mudança), não derruba a sincronização inteira
-                    ean_lookup = {}
                 analise_7 = analise_vr.analise_vinculo(
                     coletas["vinculo_produtos"], coletas["vinculo_produto"],
                     coletas["vinculo_ncm"], coletas["classificacoes"], rfb_conn,
