@@ -210,11 +210,17 @@ def _ncm_oficial(caminho: str | None = None):
 LIMITE_LISTA = 500
 
 
-def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None):
+def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None, ncmcest=None):
     """
     ncm_cadastrados: linhas de `public.ncm` nível 3 (id, ncm1, ncm2, ncm3,
         descricao, id_situacaocadastro, datainicio, datatermino).
     produtos: produtos ativos com NCM (id_produto, ncm, ean, descricao).
+    ncmcest: linhas de `public.ncmcest` (id_ncm, id_cest) — opcional (tarefa
+        nova, pode não estar no escopo de toda ponte ainda). Sem isso, um NCM
+        com produtos=0 mas com CEST vinculado aparecia como "seguro pra
+        excluir" e a exclusão falhava direto no banco por violar
+        `fk_id_ncm` de `ncmcest` (SQLSTATE 23503) — descoberto testando de
+        verdade em produção, não é hipotético.
     """
     hoje = hoje or date.today()
     todos_leaf = _ncm_oficial(ncm_vigente_json_path)
@@ -245,6 +251,15 @@ def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None
             "ncm": ncm,
         })
 
+    # id_ncm (ncmcest) -> código formatado, pra poder contar por código como
+    # o resto da função já faz.
+    codigo_por_id = {info["id"]: codigo for codigo, info in db_ncm.items()}
+    qtd_cest_por_ncm: dict[str, int] = {}
+    for linha in (ncmcest or []):
+        codigo = codigo_por_id.get(_int(linha.get("id_ncm")))
+        if codigo:
+            qtd_cest_por_ncm[codigo] = qtd_cest_por_ncm.get(codigo, 0) + 1
+
     invalidos = []
     for codigo in invalidos_codigos:
         info = db_ncm[codigo]
@@ -256,6 +271,7 @@ def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None
         invalidos.append({
             "ncm": codigo, "descricao": info["descricao"], "motivo": motivo,
             "qtd_produtos_vinculados": len(produtos_por_ncm.get(codigo, [])),
+            "qtd_cest_vinculado": qtd_cest_por_ncm.get(codigo, 0),
         })
     invalidos.sort(key=lambda x: x["qtd_produtos_vinculados"], reverse=True)
 

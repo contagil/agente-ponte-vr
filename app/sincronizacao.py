@@ -27,6 +27,14 @@ GRUPOS: dict[str, dict] = {
         "obrigatorio": True,
         "chaves": ["ncm_cadastrado", "ncm_produtos"],
     },
+    # separado do grupo "ncm" (obrigatório) de propósito: essa tarefa é nova
+    # e pode não estar cadastrada/no escopo de toda ponte ainda — se fosse
+    # obrigatória, a sincronização inteira pararia por causa dela numa
+    # instalação que ainda não tem o catálogo atualizado.
+    "ncm_cest": {
+        "obrigatorio": False,
+        "chaves": ["ncm_cest"],
+    },
     "cst": {
         "obrigatorio": True,
         "chaves": ["cst"],
@@ -91,6 +99,7 @@ _CHAVE_RESULTADO = {
 _TASK_IDS_PADRAO = {
     "ncm_cadastrado": "reforma_ncm_cadastrado",
     "ncm_produtos": "reforma_ncm_produtos",
+    "ncm_cest": "reforma_ncm_cest",
     "ncm_ativos": "reforma_ncm_ativos",
     "cst": "reforma_cst_cadastrado",
     "cclasstrib": "reforma_cclasstrib_cadastrada",
@@ -211,7 +220,8 @@ async def sincronizar_cliente(client_id: str, agent_id: str | None,
                 "gerado_em": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "referencia": date.today().isoformat(),
                 "analise_1_ncm": analise_vr.analise_ncm(
-                    coletas["ncm_cadastrado"], coletas["ncm_produtos"]
+                    coletas["ncm_cadastrado"], coletas["ncm_produtos"],
+                    ncmcest=coletas.get("ncm_cest"),
                 ),
                 "analise_2_cst": analise_vr.analise_cst(coletas["cst"], rfb_conn),
                 "analise_3_cclasstrib": analise_3,
