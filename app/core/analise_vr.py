@@ -281,6 +281,15 @@ def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None
         for produto in produtos_por_ncm.get(item["ncm"], [])
     ]
 
+    # Lista completa (não só os LIMITE_LISTA de maior impacto) dos códigos
+    # elegíveis pra exclusão automática — só o código, sem descrição/motivo,
+    # pra caber tranquilo no JSONB mesmo com milhares de NCM (uns 10 bytes
+    # por código vs. a linha inteira com descrição, que pode passar de
+    # 200 bytes). CEST não entra mais na elegibilidade porque a exclusão já
+    # desvincula sozinha (ON DELETE CASCADE em ncmcest, aplicado no vr_teste
+    # em 04/09) — só produto vinculado ainda bloqueia de verdade.
+    todos_elegiveis = [i["ncm"] for i in invalidos if i["qtd_produtos_vinculados"] == 0]
+
     return {
         "total_vigentes_oficial": len(vigentes),
         "total_ncm_nivel3_banco": len(ncm_cadastrados),
@@ -292,6 +301,7 @@ def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None
         ],
         "ativos_invalidos_no_banco": invalidos[:LIMITE_LISTA],
         "produtos_ncm_invalido": produtos_ncm_invalido[:LIMITE_LISTA],
+        "ncm_elegiveis_exclusao_automatica": todos_elegiveis,
     }
 
 
