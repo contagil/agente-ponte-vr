@@ -43,6 +43,15 @@ GRUPOS: dict[str, dict] = {
         "obrigatorio": False,
         "chaves": ["ncm_produtos_qualquer_status"],
     },
+    # idem — NCM com vínculo em classificacaotributariancm não pode ser
+    # excluído: a FK não tem CASCADE (o role de escrita do agente não tem
+    # INSERT em `concentrador`, tabela de auditoria que o gatilho da
+    # classificacaotributariancm grava — achado em produção 09/09, ver
+    # analise_vr.py).
+    "ncm_cclasstrib_vinculo": {
+        "obrigatorio": False,
+        "chaves": ["ncm_cclasstrib_vinculo"],
+    },
     "cst": {
         "obrigatorio": True,
         "chaves": ["cst"],
@@ -109,6 +118,7 @@ _TASK_IDS_PADRAO = {
     "ncm_produtos": "reforma_ncm_produtos",
     "ncm_cest": "reforma_ncm_cest",
     "ncm_produtos_qualquer_status": "reforma_ncm_produtos_qualquer_status",
+    "ncm_cclasstrib_vinculo": "reforma_ncm_cclasstrib_vinculo",
     "ncm_ativos": "reforma_ncm_ativos",
     "cst": "reforma_cst_cadastrado",
     "cclasstrib": "reforma_cclasstrib_cadastrada",
@@ -266,6 +276,7 @@ async def sincronizar_cliente(client_id: str, agent_id: str | None,
                     coletas["ncm_cadastrado"], coletas["ncm_produtos"],
                     ncmcest=coletas.get("ncm_cest"),
                     ncm_produtos_qualquer_status=coletas.get("ncm_produtos_qualquer_status"),
+                    ncm_cclasstrib_vinculo=coletas.get("ncm_cclasstrib_vinculo"),
                 ),
                 "analise_2_cst": analise_vr.analise_cst(coletas["cst"], rfb_conn),
                 "analise_3_cclasstrib": analise_3,

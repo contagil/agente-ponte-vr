@@ -211,7 +211,7 @@ LIMITE_LISTA = 500
 
 
 def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None, ncmcest=None,
-                 ncm_produtos_qualquer_status=None):
+                 ncm_produtos_qualquer_status=None, ncm_cclasstrib_vinculo=None):
     """
     ncm_cadastrados: linhas de `public.ncm` nível 3 (id, ncm1, ncm2, ncm3,
         descricao, id_situacaocadastro, datainicio, datatermino).
@@ -231,6 +231,15 @@ def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None
         falhava direto no banco por violar `produto.fk_ncm` (chave composta
         ncm1/ncm2/ncm3, SQLSTATE 23503) — mesmo padrão do CEST acima, também
         confirmado testando contra produção (81 casos reais em 09/09).
+    ncm_cclasstrib_vinculo: códigos NCM (`{"ncm": "..."}`) com vínculo em
+        `classificacaotributariancm` — opcional (tarefa nova). Diferente do
+        CEST, essa FK NÃO pode virar ON DELETE CASCADE: o gatilho
+        `tr_concentrador` da tabela grava em `concentrador` (auditoria), e o
+        role de escrita do agente só tem SELECT ali — CASCADE nessa tabela
+        derruba a mutação inteira com "permission denied for table
+        concentrador" (confirmado em produção 09/09, revertido). Então, ao
+        contrário de CEST/produto, aqui a exclusão automática precisa
+        simplesmente EVITAR esses NCM, não desvincular sozinha.
     """
     hoje = hoje or date.today()
     todos_leaf = _ncm_oficial(ncm_vigente_json_path)
@@ -278,6 +287,12 @@ def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None
     com_produto_qualquer_status = {
         _txt(p.get("ncm")) for p in (ncm_produtos_qualquer_status or [])
     }
+    # Idem, mas pra vínculo em classificacaotributariancm — essa FK não tem
+    # (e não pode ter) CASCADE, então qualquer vínculo aqui bloqueia a
+    # exclusão de verdade, sem meio-termo.
+    com_cclasstrib_vinculo = {
+        _txt(p.get("ncm")) for p in (ncm_cclasstrib_vinculo or [])
+    }
 
     invalidos = []
     for codigo in invalidos_codigos:
@@ -292,6 +307,7 @@ def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None
             "qtd_produtos_vinculados": len(produtos_por_ncm.get(codigo, [])),
             "qtd_cest_vinculado": qtd_cest_por_ncm.get(codigo, 0),
             "tem_produto_inativo": codigo in com_produto_qualquer_status,
+            "tem_cclasstrib_vinculado": codigo in com_cclasstrib_vinculo,
         })
     invalidos.sort(key=lambda x: x["qtd_produtos_vinculados"], reverse=True)
 
@@ -307,11 +323,15 @@ def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None
     # por código vs. a linha inteira com descrição, que pode passar de
     # 200 bytes). CEST não entra mais na elegibilidade porque a exclusão já
     # desvincula sozinha (ON DELETE CASCADE em ncmcest, aplicado no vr_teste
-    # em 04/09). Produto (qualquer status) ainda bloqueia de verdade — 75 de
-    # 81 casos travados em 09/09 eram exatamente isso.
+    # em 04/09). Produto (qualquer status) e CClassTrib vinculado ainda
+    # bloqueiam de verdade — 75 de 81 casos travados em 09/09 eram produto
+    # inativo; os demais, vínculo em classificacaotributariancm (essa FK não
+    # pode ganhar CASCADE, ver docstring do parâmetro acima).
     todos_elegiveis = [
         i["ncm"] for i in invalidos
-        if i["qtd_produtos_vinculados"] == 0 and i["ncm"] not in com_produto_qualquer_status
+        if i["qtd_produtos_vinculados"] == 0
+        and i["ncm"] not in com_produto_qualquer_status
+        and i["ncm"] not in com_cclasstrib_vinculo
     ]
 
     return {
