@@ -148,9 +148,10 @@ class SincronizacaoError(Exception):
 
 async def sincronizar_cliente(client_id: str, agent_id: str | None,
                               cclasstrib_lista: list[str]) -> dict:
-    """Dispara as 28 consultas (sequencial — o cérebro aceita no máximo 2 por
-    agente em voo, §7 da proposta) e roda as análises. Devolve o `resultado`
-    completo, no mesmo formato que a tela do RL sempre consumiu."""
+    """Dispara as 28 consultas (paralelo, até 2 em voo por vez — o máximo que
+    o cérebro aceita por agente, §7 da proposta) e roda as análises. Devolve
+    o `resultado` completo, no mesmo formato que a tela do RL sempre
+    consumiu."""
     if not rfb_reference.base_disponivel():
         raise SincronizacaoError(
             "Base oficial da Receita Federal indisponível nesta ponte "
@@ -161,21 +162,54 @@ async def sincronizar_cliente(client_id: str, agent_id: str | None,
     indisponiveis: dict[str, str] = {}
     origem_resposta = None
 
+    # As 28 consultas rodam em paralelo, limitadas a 2 em voo por vez (o
+    # máximo que o cérebro aceita por agente, §7 da proposta — estourar isso
+    # devolve 429). Antes rodava tudo sequencial (1 por vez, sub-utilizando a
+    # cota); com o semáforo em 2, o tempo total cai pra ~metade sem violar o
+    # limite do cérebro.
+    semaforo = asyncio.Semaphore(2)
+
+    async def _consultar(chave: str):
+        async with semaforo:
+            return chave, await agente.consultar(TAREFAS[chave], client_id, agent_id=agent_id)
+
+    tarefas_por_chave = {
+        chave: nome_grupo
+        for nome_grupo, grupo in GRUPOS.items()
+        for chave in grupo["chaves"]
+    }
+    resultados = await asyncio.gather(
+        *(_consultar(chave) for chave in tarefas_por_chave), return_exceptions=True
+    )
+
+    falhas_por_grupo: dict[str, agente.AgenteVRError] = {}
+    for chave, resultado in zip(tarefas_por_chave, resultados):
+        nome_grupo = tarefas_por_chave[chave]
+        if isinstance(resultado, tuple):
+            _, resposta = resultado
+            coletas[chave] = resposta.como_dicts()
+            if origem_resposta is None:
+                origem_resposta = resposta
+        else:
+            # `return_exceptions=True` devolve a exceção em vez de propagar —
+            # guarda a primeira falha de cada grupo pra decidir depois (não
+            # decide aqui pra não parar de coletar as outras chaves em voo).
+            exc = resultado
+            if not isinstance(exc, agente.AgenteVRError):
+                raise exc
+            falhas_por_grupo.setdefault(nome_grupo, exc)
+
     for nome_grupo, grupo in GRUPOS.items():
-        try:
-            for chave in grupo["chaves"]:
-                resposta = await agente.consultar(TAREFAS[chave], client_id, agent_id=agent_id)
-                coletas[chave] = resposta.como_dicts()
-                if origem_resposta is None:
-                    origem_resposta = resposta
-        except agente.AgenteVRError as exc:
-            if grupo["obrigatorio"]:
-                raise SincronizacaoError(f"[{exc.status_code}] {exc.mensagem}") from exc
-            # tabela que não existe nesta instalação do VR, ou tarefa fora do
-            # escopo: a análise correspondente sai do relatório, o resto segue
-            indisponiveis[nome_grupo] = exc.mensagem
-            for chave in grupo["chaves"]:
-                coletas.pop(chave, None)
+        exc = falhas_por_grupo.get(nome_grupo)
+        if exc is None:
+            continue
+        if grupo["obrigatorio"]:
+            raise SincronizacaoError(f"[{exc.status_code}] {exc.mensagem}") from exc
+        # tabela que não existe nesta instalação do VR, ou tarefa fora do
+        # escopo: a análise correspondente sai do relatório, o resto segue
+        indisponiveis[nome_grupo] = exc.mensagem
+        for chave in grupo["chaves"]:
+            coletas.pop(chave, None)
 
     # Buscas de EAN via HTTP (async de verdade, precisam do event loop) —
     # calculadas AQUI, fora de rodar_analises(), porque essa função roda numa
