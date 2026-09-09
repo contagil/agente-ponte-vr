@@ -210,7 +210,8 @@ def _ncm_oficial(caminho: str | None = None):
 LIMITE_LISTA = 500
 
 
-def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None, ncmcest=None):
+def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None, ncmcest=None,
+                 ncm_produtos_qualquer_status=None):
     """
     ncm_cadastrados: linhas de `public.ncm` nível 3 (id, ncm1, ncm2, ncm3,
         descricao, id_situacaocadastro, datainicio, datatermino).
@@ -221,6 +222,15 @@ def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None
         excluir" e a exclusão falhava direto no banco por violar
         `fk_id_ncm` de `ncmcest` (SQLSTATE 23503) — descoberto testando de
         verdade em produção, não é hipotético.
+    ncm_produtos_qualquer_status: códigos NCM (`{"ncm": "..."}`) com QUALQUER
+        linha em `public.produto`, ativa ou não — opcional (tarefa nova). Sem
+        isso a elegibilidade só olhava `produtos` (produto ATIVO, via
+        `produtocomplemento.id_situacaocadastro = 1`), e um NCM com produto
+        inativo (linha ainda existe, só desativada em toda loja) aparecia
+        como "0 produtos vinculados" e "seguro pra excluir", mas a exclusão
+        falhava direto no banco por violar `produto.fk_ncm` (chave composta
+        ncm1/ncm2/ncm3, SQLSTATE 23503) — mesmo padrão do CEST acima, também
+        confirmado testando contra produção (81 casos reais em 09/09).
     """
     hoje = hoje or date.today()
     todos_leaf = _ncm_oficial(ncm_vigente_json_path)
@@ -260,6 +270,15 @@ def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None
         if codigo:
             qtd_cest_por_ncm[codigo] = qtd_cest_por_ncm.get(codigo, 0) + 1
 
+    # Códigos com produto de QUALQUER status (ativo ou não) — é o que a FK
+    # `produto.fk_ncm` realmente enxerga; `qtd_produtos_vinculados` (abaixo)
+    # só conta ativo, então sozinho não é suficiente pra saber se a exclusão
+    # vai passar no banco. Sem a tarefa nova (ponte antiga), cai pro mesmo
+    # critério de antes — melhor que travar a análise inteira.
+    com_produto_qualquer_status = {
+        _txt(p.get("ncm")) for p in (ncm_produtos_qualquer_status or [])
+    }
+
     invalidos = []
     for codigo in invalidos_codigos:
         info = db_ncm[codigo]
@@ -272,6 +291,7 @@ def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None
             "ncm": codigo, "descricao": info["descricao"], "motivo": motivo,
             "qtd_produtos_vinculados": len(produtos_por_ncm.get(codigo, [])),
             "qtd_cest_vinculado": qtd_cest_por_ncm.get(codigo, 0),
+            "tem_produto_inativo": codigo in com_produto_qualquer_status,
         })
     invalidos.sort(key=lambda x: x["qtd_produtos_vinculados"], reverse=True)
 
@@ -287,8 +307,12 @@ def analise_ncm(ncm_cadastrados, produtos, ncm_vigente_json_path=None, hoje=None
     # por código vs. a linha inteira com descrição, que pode passar de
     # 200 bytes). CEST não entra mais na elegibilidade porque a exclusão já
     # desvincula sozinha (ON DELETE CASCADE em ncmcest, aplicado no vr_teste
-    # em 04/09) — só produto vinculado ainda bloqueia de verdade.
-    todos_elegiveis = [i["ncm"] for i in invalidos if i["qtd_produtos_vinculados"] == 0]
+    # em 04/09). Produto (qualquer status) ainda bloqueia de verdade — 75 de
+    # 81 casos travados em 09/09 eram exatamente isso.
+    todos_elegiveis = [
+        i["ncm"] for i in invalidos
+        if i["qtd_produtos_vinculados"] == 0 and i["ncm"] not in com_produto_qualquer_status
+    ]
 
     return {
         "total_vigentes_oficial": len(vigentes),

@@ -35,6 +35,14 @@ GRUPOS: dict[str, dict] = {
         "obrigatorio": False,
         "chaves": ["ncm_cest"],
     },
+    # idem — tarefa nova (09/09), pode não estar cadastrada em toda ponte
+    # ainda. Sem ela a elegibilidade de exclusão cai pro critério antigo
+    # (só produto ATIVO), que já se provou insuficiente (produto inativo
+    # também bloqueia a FK — ver analise_ncm).
+    "ncm_produtos_qualquer_status": {
+        "obrigatorio": False,
+        "chaves": ["ncm_produtos_qualquer_status"],
+    },
     "cst": {
         "obrigatorio": True,
         "chaves": ["cst"],
@@ -100,6 +108,7 @@ _TASK_IDS_PADRAO = {
     "ncm_cadastrado": "reforma_ncm_cadastrado",
     "ncm_produtos": "reforma_ncm_produtos",
     "ncm_cest": "reforma_ncm_cest",
+    "ncm_produtos_qualquer_status": "reforma_ncm_produtos_qualquer_status",
     "ncm_ativos": "reforma_ncm_ativos",
     "cst": "reforma_cst_cadastrado",
     "cclasstrib": "reforma_cclasstrib_cadastrada",
@@ -256,6 +265,7 @@ async def sincronizar_cliente(client_id: str, agent_id: str | None,
                 "analise_1_ncm": analise_vr.analise_ncm(
                     coletas["ncm_cadastrado"], coletas["ncm_produtos"],
                     ncmcest=coletas.get("ncm_cest"),
+                    ncm_produtos_qualquer_status=coletas.get("ncm_produtos_qualquer_status"),
                 ),
                 "analise_2_cst": analise_vr.analise_cst(coletas["cst"], rfb_conn),
                 "analise_3_cclasstrib": analise_3,
