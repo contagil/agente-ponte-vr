@@ -430,6 +430,7 @@ def analise_cst(cst_cadastrados, rfb_conn, hoje=None):
                 status = "CÓDIGO OK - DESCRIÇÃO DIVERGENTE (conferir manualmente)"
 
         resultado.append({
+            "id": _int(linha.get("id")),
             "cst": cst, "descricao_vr": desc_vr, "descricao_oficial": desc_of,
             "status": status, "ativo": _int(linha.get("id_situacaocadastro")) == 1,
         })
