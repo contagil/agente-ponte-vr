@@ -433,13 +433,40 @@ def analise_cst(cst_cadastrados, rfb_conn, hoje=None):
             "id": _int(linha.get("id")),
             "cst": cst, "descricao_vr": desc_vr, "descricao_oficial": desc_of,
             "status": status, "ativo": _int(linha.get("id_situacaocadastro")) == 1,
+            "_indicadores_ok": not divergentes,
         })
+
+    # Código CST não é chave única no VR — um cliente pode ter mais de uma
+    # linha com o mesmo código (achado em produção 10/09: cadastro de teste
+    # duplicado). Critério de qual manter, pra sugerir remoção das demais:
+    # 1) prioriza a linha com indicadores corretos (se só uma tiver); 2) se
+    # nenhuma ou mais de uma tiver indicadores corretos, desempata pelo id
+    # mais alto (cadastro mais recente).
+    por_codigo: dict[str, list[dict]] = {}
+    for item in resultado:
+        por_codigo.setdefault(item["cst"], []).append(item)
+
+    duplicados = []
+    for codigo, linhas in por_codigo.items():
+        if len(linhas) < 2:
+            continue
+        corretas = [i for i in linhas if i["_indicadores_ok"]]
+        manter = corretas[0] if len(corretas) == 1 else max(linhas, key=lambda i: i["id"] or 0)
+        remover = [i["id"] for i in linhas if i["id"] != manter["id"]]
+        duplicados.append({
+            "cst": codigo, "manter_id": manter["id"], "remover_ids": remover,
+            "linhas": [{"id": i["id"], "descricao": i["descricao_vr"], "status": i["status"]} for i in linhas],
+        })
+
+    for item in resultado:
+        item.pop("_indicadores_ok", None)
 
     cadastrados = {_txt(c.get("cst")) for c in cst_cadastrados}
     nao_usados = sorted(set(oficiais) - cadastrados)
 
     return {
         "cst_cadastrados": resultado,
+        "cst_duplicados": duplicados,
         "cst_vigentes_nao_cadastrados": [
             {"cst": c, "descricao": oficiais[c]} for c in nao_usados
         ],
