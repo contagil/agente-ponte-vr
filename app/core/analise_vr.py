@@ -1629,6 +1629,7 @@ def analise_correcao_cadastral(produtos, ean_lookup: dict | None = None):
         if ncm_ref and len(ncm_ref) == 8 and ncm_ref != ncm_vr:
             ncm_divergente.append({
                 "id_produto": id_produto, "ean": ean,
+                "descricao_vr": desc_vr, "descricao_rl": desc_ref,
                 "ncm_vr": ncm_vr, "ncm_sugerido": ncm_ref,
                 "ncm1_sugerido": int(ncm_ref[:4]), "ncm2_sugerido": int(ncm_ref[4:6]), "ncm3_sugerido": int(ncm_ref[6:8]),
             })
