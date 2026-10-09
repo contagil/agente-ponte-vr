@@ -11,7 +11,7 @@ import os
 from datetime import date, datetime, timezone
 
 from app.core import agente_vr_client as agente
-from app.core import analise_vr, rfb_reference
+from app.core import analise_vr, rfb_reference, smartpricing
 from app import cliente_rl
 
 # Consultas do catálogo do cérebro, agrupadas por análise. O task_id vem de
@@ -86,6 +86,12 @@ GRUPOS: dict[str, dict] = {
         "obrigatorio": False,
         "chaves": ["ajuste_preco"],
     },
+    # SmartPricing (Francilene, 08/10/2026): preço novo com CBS, só leitura. Opcional: se a
+    # tarefa ainda não estiver cadastrada no cérebro, só essa análise sai do relatório.
+    "smartpricing": {
+        "obrigatorio": False,
+        "chaves": ["smartpricing"],
+    },
     "eventos": {
         "obrigatorio": False,
         "chaves": ["tipoautor", "tipoevento", "eventos_totais"],
@@ -111,6 +117,7 @@ _CHAVE_RESULTADO = {
     "eventos": "analise_10_eventos",
     "ajuste_preco": "analise_12_ajuste_preco",
     "correcao_cadastral": "analise_13_correcao_cadastral",
+    "smartpricing": "analise_14_smartpricing",
 }
 
 _TASK_IDS_PADRAO = {
@@ -146,6 +153,7 @@ _TASK_IDS_PADRAO = {
     "eventos_totais": "reforma_eventos_totais",
     "empresas": "reforma_empresas",
     "ajuste_preco": "reforma_ajuste_preco",
+    "smartpricing": "reforma_smartpricing_base",
     "correcao_cadastral_produtos": "reforma_correcao_cadastral_produtos",
 }
 
@@ -300,6 +308,11 @@ async def sincronizar_cliente(client_id: str, agent_id: str | None,
                     "indisponivel": True,
                     "motivo": "depende do IBS estadual/municipal (grupo UF/Município/CBS), que está indisponível",
                 }
+
+            if "smartpricing" not in indisponiveis:
+                resultado["analise_14_smartpricing"] = smartpricing.analise_smartpricing(
+                    coletas["smartpricing"],
+                )
 
             if "correcao_cadastral" not in indisponiveis:
                 resultado["analise_13_correcao_cadastral"] = analise_vr.analise_correcao_cadastral(
