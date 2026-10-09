@@ -27,7 +27,9 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv()
 
 from app import cliente_rl  # noqa: E402
-from app.sincronizacao import SincronizacaoError, diagnostico, sincronizar_cliente  # noqa: E402
+from app.sincronizacao import (  # noqa: E402
+    SincronizacaoError, diagnostico, sincronizar_cliente, sincronizar_smartpricing,
+)
 from app.provisionamento import ProvisionamentoError, provisionar_cliente_e_agente  # noqa: E402
 from app.core import agente_vr_client as agente  # noqa: E402
 
@@ -69,6 +71,24 @@ async def _processar_sincronizacao(pedido: dict) -> None:
     resumo = analise_vr.resumir(resultado)
     await cliente_rl.entregar_resultado(pedido_id, status="concluido", resumo=resumo, resultado=resultado)
     log.info("pedido %s concluído em %.1fs", pedido_id, time.monotonic() - inicio)
+
+
+async def _processar_smartpricing(pedido: dict) -> None:
+    pedido_id = pedido["pedido_id"]
+    log.info("processando pedido %s (smartpricing, client_id=%s)", pedido_id, pedido["client_id"])
+    inicio = time.monotonic()
+    try:
+        resultado = await sincronizar_smartpricing(pedido["client_id"], pedido.get("agent_id"))
+    except SincronizacaoError as exc:
+        log.warning("pedido %s falhou: %s", pedido_id, exc)
+        await cliente_rl.entregar_resultado(pedido_id, status="erro", erro=str(exc))
+        return
+    except Exception as exc:  # noqa: BLE001
+        log.exception("pedido %s: falha inesperada", pedido_id)
+        await cliente_rl.entregar_resultado(pedido_id, status="erro", erro=f"erro interno: {exc}")
+        return
+    await cliente_rl.entregar_resultado(pedido_id, status="concluido", resumo={}, resultado=resultado)
+    log.info("pedido %s (smartpricing) concluído em %.1fs", pedido_id, time.monotonic() - inicio)
 
 
 async def _processar_provisionamento(pedido: dict) -> None:
@@ -170,6 +190,8 @@ async def _processar(pedido: dict) -> None:
         await _processar_configurar_banco(pedido)
     elif tipo == "corrigir":
         await _processar_corrigir(pedido)
+    elif tipo == "smartpricing":
+        await _processar_smartpricing(pedido)
     else:
         await _processar_sincronizacao(pedido)
 

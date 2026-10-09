@@ -173,6 +173,22 @@ class SincronizacaoError(Exception):
     """Falha num grupo obrigatório — a sincronização inteira para."""
 
 
+async def sincronizar_smartpricing(client_id: str, agent_id: str | None) -> dict:
+    """Só a consulta do SmartPricing (Ajuste de Preço em Lote). Existe pra tela de preços não
+    depender das ~28 consultas da sincronização completa — nem do escopo de todas elas. A
+    parte devolvida é mesclada pelo RL na última análise, sem tocar nas demais."""
+    try:
+        resposta = await agente.consultar(TAREFAS["smartpricing"], client_id, agent_id=agent_id)
+    except agente.AgenteVRError as exc:
+        raise SincronizacaoError(f"[{exc.status_code}] {exc.mensagem}") from exc
+    linhas = resposta.como_dicts()
+    analise = await asyncio.to_thread(smartpricing.analise_smartpricing, linhas)
+    return {
+        "gerado_em": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "analise_14_smartpricing": analise,
+    }
+
+
 async def sincronizar_cliente(client_id: str, agent_id: str | None,
                               cclasstrib_lista: list[str]) -> dict:
     """Dispara as 28 consultas (paralelo, até 2 em voo por vez — o máximo que
