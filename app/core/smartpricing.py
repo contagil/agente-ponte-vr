@@ -97,6 +97,8 @@ def simular(linha: dict) -> dict:
         "aliq_cofins": _r(cofins * CEM, QUATRO_CASAS),
         "aliq_icms": _r(icms * CEM, QUATRO_CASAS),
         "sem_icms": not _txt(linha.get("cst_icms")),
+        "cst_piscofins": _txt(linha.get("cst_piscofins")),
+        "cst_icms": _txt(linha.get("cst_icms")),
         "cclasstrib": _txt(linha.get("cclasstrib")),
         "cst_ibscbs": _txt(linha.get("cst_ibscbs")),
         "reducao_ibscbs": _r(reducao * CEM),
